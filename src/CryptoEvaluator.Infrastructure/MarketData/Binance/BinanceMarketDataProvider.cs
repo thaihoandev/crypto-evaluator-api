@@ -42,7 +42,9 @@ public class BinanceMarketDataProvider : IMarketDataProvider
     {
         string binanceSymbol = symbol.ToUpperInvariant().Trim();
         string interval = MapTimeframeToInterval(timeframe);
-        string cacheKey = $"market:candles:{binanceSymbol}:{interval}:{limit}";
+        // Versioning prevents previously cached synthetic/open-candle series from
+        // being reused after the live-data-only policy was introduced.
+        string cacheKey = $"market:closed-candles:v2:{binanceSymbol}:{interval}:{limit}";
 
         if (_cache != null)
         {
@@ -54,7 +56,7 @@ public class BinanceMarketDataProvider : IMarketDataProvider
                     var cachedCandles = JsonSerializer.Deserialize<List<Candle>>(cachedBytes);
                     if (cachedCandles != null && cachedCandles.Count > 0)
                     {
-                        return cachedCandles;
+                        return ExcludeOpenCandle(cachedCandles);
                     }
                 }
             }
@@ -108,7 +110,7 @@ public class BinanceMarketDataProvider : IMarketDataProvider
                         }
                     }
 
-                    return candles;
+                    return ExcludeOpenCandle(candles);
                 }
             }
         }
@@ -117,8 +119,9 @@ public class BinanceMarketDataProvider : IMarketDataProvider
             _logger.LogError(ex, "Failed to fetch live market candles from Binance for {Symbol}. Fallback synthetic candles generated.", binanceSymbol);
         }
 
-        // Fallback synthetic candle generation if external API call fails or times out
-        return GenerateSyntheticCandles(binanceSymbol, limit);
+        // A fabricated series can look plausible but makes a trading prediction
+        // meaningless. Callers can surface this as a data-quality failure instead.
+        throw new HttpRequestException($"Unable to retrieve live market candles for '{binanceSymbol}'.");
     }
 
     public async Task<MarketTicker> GetTickerAsync(
@@ -265,6 +268,12 @@ public class BinanceMarketDataProvider : IMarketDataProvider
         Timeframe.D1 => "1d",
         _ => "1h"
     };
+
+    private static IReadOnlyList<Candle> ExcludeOpenCandle(IEnumerable<Candle> candles)
+    {
+        DateTime now = DateTime.UtcNow;
+        return candles.Where(c => c.CloseTime is null || c.CloseTime <= now).ToList();
+    }
 
     private static IReadOnlyList<Candle> GenerateSyntheticCandles(string symbol, int limit)
     {

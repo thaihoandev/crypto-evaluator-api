@@ -59,5 +59,14 @@ public class MonteCarloGbmPredictorTests
         result1.NoHitProbability.Should().Be(result2.NoHitProbability);
         result1.ExpectedRMultiple.Should().Be(result2.ExpectedRMultiple);
         (result1.WinProbability + result1.LossProbability + result1.NoHitProbability).Should().Be(100.0m);
+        result1.ScenarioPaths.Should().NotBeNull();
+        result1.ScenarioPaths!.Select(path => path.Name).Should().Equal("Bear", "Base", "Bull");
+        result1.ScenarioPaths.Should().OnlyContain(path => path.Points.Count == 26);
+
+        // Scenario lines must be coherent simulations and therefore separate at
+        // the horizon; percentile bounds alone are not rendered as candles.
+        var terminalPrices = result1.ScenarioPaths.Select(path => path.Points[^1].Price).ToList();
+        terminalPrices.Distinct().Should().HaveCountGreaterThan(1);
+        result1.ScenarioPaths[0].Points[0].Price.Should().Be(candles[^1].Close);
     }
 }

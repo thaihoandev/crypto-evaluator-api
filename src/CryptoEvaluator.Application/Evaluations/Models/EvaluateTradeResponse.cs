@@ -48,6 +48,25 @@ public record TrajectoryPointDto(
     decimal CumulativeTpHitProb = 0m,
     decimal CumulativeSlHitProb = 0m);
 
+// A coherent simulated path, intended for rendering a scenario line or candles.
+// Unlike the percentile envelope above, every point belongs to the same simulation.
+public record ScenarioPathDto(
+    string Name,
+    IReadOnlyList<TrajectoryPointDto> Points);
+
+public record PredictionDataQualityDto(
+    bool IsSufficient,
+    int ClosedCandleCount,
+    DateTime LastClosedCandleTime,
+    int DataAgeSeconds,
+    bool IsStale,
+    string Source);
+
+public record PredictionConfidenceDto(
+    decimal Score,
+    string Level,
+    IReadOnlyList<string> Factors);
+
 public record TradePredictionDto(
     decimal WinProbability,
     decimal LossProbability,
@@ -58,4 +77,7 @@ public record TradePredictionDto(
     int? SampleSize,
     int? RandomSeed,
     string Disclaimer,
-    IReadOnlyList<TrajectoryPointDto>? TrajectoryPoints = null);
+    IReadOnlyList<TrajectoryPointDto>? TrajectoryPoints = null,
+    IReadOnlyList<ScenarioPathDto>? ScenarioPaths = null,
+    PredictionDataQualityDto? DataQuality = null,
+    PredictionConfidenceDto? Confidence = null);

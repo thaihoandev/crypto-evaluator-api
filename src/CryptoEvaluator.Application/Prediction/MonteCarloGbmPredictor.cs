@@ -15,7 +15,9 @@ public record TradePredictionResult(
     int? RandomSeed,
     int? SampleSize = null,
     string? Disclaimer = "Quantitative indicator & ATR prediction model, not financial advice.",
-    IReadOnlyList<TrajectoryPointDto>? TrajectoryPoints = null);
+    IReadOnlyList<TrajectoryPointDto>? TrajectoryPoints = null,
+    IReadOnlyList<ScenarioPathDto>? ScenarioPaths = null,
+    PredictionConfidenceDto? Confidence = null);
 
 public interface ITradePredictionEngine
 {
@@ -58,11 +60,12 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
         decimal tpDist = Math.Abs(tp - entry);
         decimal rr     = slDist > 0 ? tpDist / slDist : 1.0m;
 
-        // GBM parameters — two drift values:
-        //   muMarket : pure historical drift (no direction bias) → used for trajectory
-        //   muTrade  : historical drift + indicator alignment bias → used for win/loss
-        //   sigma    : historical volatility (same for both)
-        var (muMarket, muTrade, sigma) = CalibrateFromCandles(candles, trade, indicators);
+        if (candles.Count < 2)
+            throw new ArgumentException("At least two closed candles are required for prediction.", nameof(candles));
+
+        // Anchor the forecast to the latest observed close, not a possibly stale
+        // entry price. Mean reversion is enabled only for a detected ranging regime.
+        var (muMarket, sigma, meanReversionSpeed) = CalibrateFromCandles(candles, trade, indicators);
 
         // dt = 1 candle step (normalised)
         const double dt = 1.0;
@@ -76,12 +79,7 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
         int noHits = 0;
         double totalR = 0.0;
 
-        // ── Two separate tracking arrays ──────────────────────────────────────
-        // 1. marketPricesByStep : raw GBM price, NO clamping → used for trajectory
-        //    Uses muMarket (pure historical, no direction bias) so the displayed
-        //    trajectory reflects where the market would go, not the trade parameters.
-        // 2. TP/SL hit tracking via wins/losses/noHits → win/loss probability
-        //    Uses muTrade (historical + indicator bias aligned with direction).
+        // The same price path drives both chart output and TP/SL evaluation.
         var marketPricesByStep = new List<double>[ProjectionSteps + 1];
         for (int i = 0; i <= ProjectionSteps; i++)
             marketPricesByStep[i] = new List<double>(numPaths);
@@ -90,6 +88,7 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
         int[] slHitsByStep = new int[ProjectionSteps + 1];
 
         double entryD = (double)entry;
+        double anchorPriceD = (double)candles[^1].Close;
         double tpD    = (double)tp;
         double slD    = (double)sl;
         double targetAnchorD = (double)(indicators.Ema20 > 0 && indicators.Ema50 > 0
@@ -98,10 +97,9 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
 
         for (int p = 0; p < numPaths; p++)
         {
-            double marketPrice = entryD;
+            double marketPrice = anchorPriceD;
             marketPricesByStep[0].Add(marketPrice);
 
-            double tradePrice = entryD;
             bool hitTp = false;
             bool hitSl = false;
             bool terminated = false;
@@ -113,29 +111,21 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
                 // Fat-tailed noise sampling: Student's t-distribution with df=5
                 double z = SampleFatTailedNoise(rng, df: 5.0);
 
-                // Volatility decay over holding steps (GARCH-like decay to baseline)
-                double stepSigma = sigma * Math.Exp(-0.02 * step);
-
-                // Drift decay over holding period
-                double stepMuMarket = muMarket * Math.Exp(-0.03 * step);
-                double stepMuTrade  = muTrade  * Math.Exp(-0.03 * step);
-
-                // Ornstein-Uhlenbeck Mean Reversion Pull towards key EMA level (theta = 0.04)
-                double meanReversionPull = 0.04 * Math.Log(targetAnchorD / Math.Max(1e-4, marketPrice));
-                double stepMuMarketAdjusted = stepMuMarket + meanReversionPull;
+                // Persistent EWMA-calibrated volatility avoids paths collapsing
+                // into a flat median as the horizon increases.
+                double stepSigma = sigma;
+                double meanReversionPull = meanReversionSpeed * Math.Log(targetAnchorD / Math.Max(1e-4, marketPrice));
+                double stepMuMarketAdjusted = muMarket + meanReversionPull;
 
                 // ── Path A: Pure market trajectory using muMarket & mean reversion
                 marketPrice *= Math.Exp((stepMuMarketAdjusted - 0.5 * stepSigma * stepSigma) * dt + stepSigma * sqrtDt * z);
                 marketPricesByStep[step].Add(marketPrice);
 
-                // ── Path B: Trade outcome evaluation using muTrade (indicator & trend aligned drift)
-                tradePrice *= Math.Exp((stepMuTrade - 0.5 * stepSigma * stepSigma) * dt + stepSigma * sqrtDt * z);
-
                 // Check TP / SL — only count outcome once per path
                 if (!terminated)
                 {
-                    bool tpHit = isLong ? tradePrice >= tpD : tradePrice <= tpD;
-                    bool slHit = isLong ? tradePrice <= slD : tradePrice >= slD;
+                    bool tpHit = isLong ? marketPrice >= tpD : marketPrice <= tpD;
+                    bool slHit = isLong ? marketPrice <= slD : marketPrice >= slD;
 
                     if (tpHit || slHit)
                     {
@@ -175,7 +165,7 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
             {
                 noHits++;
                 // Partial R based on final unrealised price vs trade boundaries
-                double finalPrice = marketPricesByStep[ProjectionSteps][^1];
+                double finalPrice = marketPrice;
                 double partialR   = isLong
                     ? (finalPrice - entryD) / (double)slDist
                     : (entryD - finalPrice) / (double)slDist;
@@ -187,6 +177,9 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
         decimal lossProb   = Math.Round((decimal)losses / numPaths * 100m, 2);
         decimal noHitProb  = Math.Round((decimal)noHits / numPaths * 100m, 2);
         decimal expectedR  = Math.Round((decimal)(totalR / numPaths), 4);
+        TimeSpan candleDuration = TimeframeToCandleDuration(trade.Timeframe);
+        var scenarioPaths = BuildRepresentativePaths(marketPricesByStep, lastCandleTime, candleDuration);
+        var confidence = BuildConfidence(candles, indicators, lastCandleTime, candleDuration);
 
         // ── Build trajectory from raw market percentile envelope ──────────────
         // Uses marketPricesByStep (unclamped) so the displayed path reflects
@@ -194,7 +187,6 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
         // Each step maps to srcStep actual candles forward from lastCandleTime.
         var trajectoryPoints = new List<TrajectoryPointDto>(TrajectoryResolution + 1);
         double stepSize = (double)ProjectionSteps / TrajectoryResolution;
-        TimeSpan candleDuration = TimeframeToCandleDuration(trade.Timeframe);
 
         for (int t = 0; t <= TrajectoryResolution; t++)
         {
@@ -242,7 +234,106 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
             SimulatedPaths:   numPaths,
             Method:           PredictionMethod.MonteCarloGbm,
             RandomSeed:       randomSeed,
-            TrajectoryPoints: trajectoryPoints);
+            TrajectoryPoints: trajectoryPoints,
+            ScenarioPaths:    scenarioPaths,
+            Confidence:       confidence);
+    }
+
+    private static IReadOnlyList<ScenarioPathDto> BuildRepresentativePaths(
+        IReadOnlyList<List<double>> pricesByStep,
+        DateTime lastCandleTime,
+        TimeSpan candleDuration)
+    {
+        var finalPrices = pricesByStep[^1];
+        var ordered = finalPrices
+            .Select((price, index) => (price, index))
+            .OrderBy(x => x.price)
+            .ToList();
+
+        (string Name, double Percentile)[] scenarios =
+        [ ("Bear", 0.10), ("Base", 0.50), ("Bull", 0.90) ];
+
+        var result = new List<ScenarioPathDto>(scenarios.Length);
+        foreach (var (name, percentile) in scenarios)
+        {
+            int rank = (int)Math.Round(percentile * (ordered.Count - 1));
+            int pathIndex = ordered[rank].index;
+            var points = new List<TrajectoryPointDto>(TrajectoryResolution + 1);
+
+            for (int t = 0; t <= TrajectoryResolution; t++)
+            {
+                int sourceStep = Math.Clamp((int)Math.Round(t * (double)ProjectionSteps / TrajectoryResolution), 0, ProjectionSteps);
+                decimal close = (decimal)pricesByStep[sourceStep][pathIndex];
+                decimal open = sourceStep == 0 ? close : (decimal)pricesByStep[sourceStep - 1][pathIndex];
+                decimal high = Math.Max(open, close);
+                decimal low = Math.Min(open, close);
+
+                points.Add(new TrajectoryPointDto(
+                    Step: t,
+                    Price: RoundPrice(close),
+                    UpperBound: RoundPrice(high),
+                    LowerBound: RoundPrice(low),
+                    Timestamp: lastCandleTime + candleDuration * sourceStep,
+                    ExpectedOpen: RoundPrice(open),
+                    ExpectedHigh: RoundPrice(high),
+                    ExpectedLow: RoundPrice(low),
+                    ExpectedClose: RoundPrice(close)));
+            }
+
+            result.Add(new ScenarioPathDto(name, points));
+        }
+
+        return result;
+    }
+
+    private static PredictionConfidenceDto BuildConfidence(
+        IReadOnlyList<Candle> candles,
+        IndicatorSnapshot indicators,
+        DateTime lastCandleTime,
+        TimeSpan candleDuration)
+    {
+        var factors = new List<string>();
+        decimal score = Math.Min(35m, candles.Count / 200m * 35m);
+        factors.Add($"{candles.Count} closed candles available");
+
+        double ageInCandles = Math.Max(0, (DateTime.UtcNow - (lastCandleTime + candleDuration)).TotalSeconds / candleDuration.TotalSeconds);
+        if (ageInCandles <= 2)
+        {
+            score += 25m;
+            factors.Add("market data is recent");
+        }
+        else
+        {
+            factors.Add($"market data is {ageInCandles:F1} candles old");
+        }
+
+        decimal relativeAtr = indicators.CurrentPrice > 0 ? indicators.Atr / indicators.CurrentPrice : 0m;
+        if (relativeAtr is >= 0.001m and <= 0.10m)
+        {
+            score += 20m;
+            factors.Add("ATR is within the calibrated operating range");
+        }
+        else
+        {
+            factors.Add("ATR is outside the calibrated operating range");
+        }
+
+        bool bullishAlignment = indicators.CurrentPrice >= indicators.Ema20 && indicators.Ema20 >= indicators.Ema50;
+        bool bearishAlignment = indicators.CurrentPrice <= indicators.Ema20 && indicators.Ema20 <= indicators.Ema50;
+        if (bullishAlignment || bearishAlignment)
+        {
+            score += 20m;
+            factors.Add("EMA trend alignment is clear");
+        }
+        else
+        {
+            score += 10m;
+            factors.Add("EMA trend alignment is mixed");
+        }
+
+        score = Math.Round(Math.Clamp(score, 0m, 100m), 1);
+        string level = score switch { >= 80m => "High", >= 60m => "Medium", _ => "Low" };
+        return new PredictionConfidenceDto(score, level, factors);
     }
 
     // ── Helpers ────────────────────────────────────────────────────────────────
@@ -254,7 +345,7 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
     ///   muTrade  : historical drift + small indicator-alignment bias — for TP/SL hit rate
     ///   sigma    : sample std-dev of log returns — used by both
     /// </summary>
-    private static (double muMarket, double muTrade, double sigma) CalibrateFromCandles(
+    private static (double muMarket, double sigma, double meanReversionSpeed) CalibrateFromCandles(
         IReadOnlyList<Candle> candles,
         Trade trade,
         IndicatorSnapshot indicators)
@@ -280,10 +371,13 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
                 muEma = alpha * logReturns[i] + (1.0 - alpha) * muEma;
             }
 
-            double variance = logReturns
-                .Sum(r => (r - muEma) * (r - muEma))
-                / (logReturns.Count - 1);
-            sigmaHistorical = Math.Sqrt(variance);
+            // EWMA adapts to the latest volatility regime without mechanically
+            // shrinking every simulated candle as the forecast advances.
+            const double lambda = 0.94;
+            double ewmaVariance = logReturns[0] * logReturns[0];
+            for (int i = 1; i < logReturns.Count; i++)
+                ewmaVariance = lambda * ewmaVariance + (1.0 - lambda) * logReturns[i] * logReturns[i];
+            sigmaHistorical = Math.Sqrt(ewmaVariance);
         }
 
         // ── 2. Compute Parkinson Range Volatility & Close-to-Close Volatility ──
@@ -326,27 +420,14 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
 
         double marketMomentum = marketTrend * 0.0004 + rsiMarketBias;
 
-        // ── 4. Indicator bias — applied to muTrade for win/loss calculation ──
-        bool isLong = trade.Direction == TradeDirection.Long;
-        int tradeTrendScore = 0;
-        if (isLong ? price > indicators.Ema20  : price < indicators.Ema20)  tradeTrendScore++;
-        if (isLong ? indicators.Ema20 > indicators.Ema50  : indicators.Ema20 < indicators.Ema50)  tradeTrendScore++;
-        if (isLong ? indicators.Ema50 > indicators.Ema200 : indicators.Ema50 < indicators.Ema200) tradeTrendScore++;
+        double sigmaFinal = Math.Clamp(sigmaBlended, 0.002, 0.15);
+        double muMarket = Math.Clamp(muEma + marketMomentum, -sigmaFinal * 0.35, sigmaFinal * 0.35);
 
-        double tradeRsiBias = indicators.Rsi switch
-        {
-            >= 60m => isLong ?  0.0015 : -0.0010,
-            <= 40m => isLong ? -0.0010 :  0.0015,
-            _      => 0.0
-        };
+        double emaSpread = price > 0 ? (double)Math.Abs(indicators.Ema20 - indicators.Ema50) / (double)price : 0.0;
+        bool ranging = emaSpread < 0.0025 && indicators.Rsi is >= 42m and <= 58m;
+        double meanReversionSpeed = ranging ? 0.012 : 0.0;
 
-        double tradeIndicatorBias = (isLong ? 1 : -1) * tradeTrendScore * 0.001 + tradeRsiBias;
-
-        double sigmaFinal  = Math.Clamp(sigmaBlended, 0.005, 0.15);
-        double muMarket    = muEma + marketMomentum;                  // pure market + technical momentum
-        double muTrade     = muEma + tradeIndicatorBias;              // biased toward trade direction
-
-        return (muMarket, muTrade, sigmaFinal);
+        return (muMarket, sigmaFinal, meanReversionSpeed);
     }
 
     /// <summary>
@@ -386,6 +467,19 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
         int hi = Math.Min(lo + 1, sorted.Count - 1);
         double frac = index - lo;
         return sorted[lo] * (1 - frac) + sorted[hi] * frac;
+    }
+
+    private static decimal RoundPrice(decimal price)
+    {
+        if (price == 0m) return 0m;
+
+        int decimals = price switch
+        {
+            >= 1_000m => 2,
+            >= 1m => 4,
+            _ => Math.Clamp(6 - (int)Math.Floor(Math.Log10((double)Math.Abs(price))), 6, 10)
+        };
+        return Math.Round(price, decimals);
     }
     /// <summary>
     /// Maps a Timeframe enum value to the duration of one candle.

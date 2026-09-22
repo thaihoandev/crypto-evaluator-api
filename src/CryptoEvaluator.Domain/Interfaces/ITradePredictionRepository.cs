@@ -1,4 +1,5 @@
 using CryptoEvaluator.Domain.Entities;
+using CryptoEvaluator.Domain.Models;
 
 namespace CryptoEvaluator.Domain.Interfaces;
 
@@ -13,4 +14,8 @@ public interface ITradePredictionRepository
         decimal maxRr,
         CancellationToken cancellationToken = default);
     Task AddAsync(TradePrediction prediction, CancellationToken cancellationToken = default);
+    Task<IReadOnlyList<PredictionOutcome>> GetResolvedOutcomesAsync(
+        DateTime? from,
+        DateTime? to,
+        CancellationToken cancellationToken = default);
 }

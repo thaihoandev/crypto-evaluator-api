@@ -2,6 +2,7 @@ using CryptoEvaluator.Application.Evaluations.Commands.EvaluateTrade;
 using CryptoEvaluator.Application.Evaluations.Models;
 using CryptoEvaluator.Application.MarketData.Interfaces;
 using CryptoEvaluator.Application.Predictions.Queries.GetPrediction;
+using CryptoEvaluator.Application.Predictions.Queries.GetPredictionBacktest;
 using CryptoEvaluator.Application.Trades.Commands.CloseTrade;
 using CryptoEvaluator.Application.Trades.Commands.CreateTrade;
 using CryptoEvaluator.Application.Trades.Models;
@@ -136,6 +137,23 @@ public class TradesController : ControllerBase
             return NotFound(new { code = "PREDICTION_NOT_FOUND", message = $"No prediction recorded for trade '{id}'." });
 
         return Ok(result);
+    }
+
+    /// <summary>
+    /// Compare predictions made before trades closed with their realised outcomes.
+    /// Brier score closer to zero means better-calibrated win probabilities.
+    /// </summary>
+    [HttpGet("predictions/backtest")]
+    [ProducesResponseType(typeof(PredictionBacktestReportDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetPredictionBacktest(
+        [FromQuery] DateTime? from,
+        [FromQuery] DateTime? to,
+        CancellationToken cancellationToken)
+    {
+        if (from.HasValue && to.HasValue && from > to)
+            return BadRequest(new { code = "INVALID_DATE_RANGE", message = "'from' must not be later than 'to'." });
+
+        return Ok(await _sender.Send(new GetPredictionBacktestQuery(from, to), cancellationToken));
     }
 
     /// <summary>

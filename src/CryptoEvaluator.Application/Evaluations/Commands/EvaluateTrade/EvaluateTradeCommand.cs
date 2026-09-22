@@ -64,13 +64,19 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
         var candles = await _marketDataProvider.GetCandlesAsync(
             trade.Symbol, trade.Timeframe, limit: 250, cancellationToken);
 
-        if (candles == null || candles.Count == 0)
+        // Never calibrate on Binance's still-open candle: its close/high/low change
+        // until the interval ends and make the prediction non-reproducible.
+        var closedCandles = candles
+            .Where(c => c.CloseTime is null || c.CloseTime <= DateTime.UtcNow)
+            .ToList();
+
+        if (closedCandles.Count < 30)
         {
-            throw new InvalidOperationException($"Unable to retrieve market candles for '{trade.Symbol}' on timeframe '{trade.Timeframe}'.");
+            throw new InvalidOperationException($"At least 30 closed market candles are required to evaluate '{trade.Symbol}' on timeframe '{trade.Timeframe}'.");
         }
 
         // 2. Calculate Indicators
-        var indicators = _indicatorEngine.CalculateAll(candles);
+        var indicators = _indicatorEngine.CalculateAll(closedCandles);
 
         // 3. Calculate Risk & Position Sizing
         var risk = _riskCalculator.Calculate(trade);
@@ -88,11 +94,11 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
             trade.Timeframe);
 
         // Last candle's OpenTime is the anchor for trajectory timestamps
-        DateTime lastCandleTime = candles[candles.Count - 1].OpenTime;
+        DateTime lastCandleTime = closedCandles[^1].OpenTime;
 
         // 5. Predict Outcome via Monte Carlo GBM
         var predictionResult = _predictionEngine.Predict(
-            trade, indicators, candles, lastCandleTime, effectiveSeed, numPaths: 20000);
+            trade, indicators, closedCandles, lastCandleTime, effectiveSeed, numPaths: 20000);
 
         // 6. Generate Risk Warnings
         var warnings = _warningEngine.GenerateWarnings(trade, indicators, risk);
@@ -141,7 +147,7 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
 
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var candleDtos = candles.TakeLast(60).Select(c => new CandleDto(
+        var candleDtos = closedCandles.TakeLast(60).Select(c => new CandleDto(
             OpenTime: c.OpenTime,
             Open: c.Open,
             High: c.High,
@@ -178,9 +184,40 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
                 SampleSize: predictionResult.SampleSize,
                 RandomSeed: predictionResult.RandomSeed,
                 Disclaimer: predictionResult.Disclaimer ?? string.Empty,
-                TrajectoryPoints: predictionResult.TrajectoryPoints),
+                TrajectoryPoints: predictionResult.TrajectoryPoints,
+                ScenarioPaths: predictionResult.ScenarioPaths,
+                DataQuality: BuildDataQuality(closedCandles, trade.Timeframe),
+                Confidence: predictionResult.Confidence),
             Warnings: warnings,
             Explanation: explanation,
             Candles: candleDtos);
+    }
+
+    private static PredictionDataQualityDto BuildDataQuality(
+        IReadOnlyList<CryptoEvaluator.Domain.Models.Candle> closedCandles,
+        CryptoEvaluator.Domain.Enums.Timeframe timeframe)
+    {
+        TimeSpan duration = timeframe switch
+        {
+            CryptoEvaluator.Domain.Enums.Timeframe.M1 => TimeSpan.FromMinutes(1),
+            CryptoEvaluator.Domain.Enums.Timeframe.M5 => TimeSpan.FromMinutes(5),
+            CryptoEvaluator.Domain.Enums.Timeframe.M15 => TimeSpan.FromMinutes(15),
+            CryptoEvaluator.Domain.Enums.Timeframe.M30 => TimeSpan.FromMinutes(30),
+            CryptoEvaluator.Domain.Enums.Timeframe.H1 => TimeSpan.FromHours(1),
+            CryptoEvaluator.Domain.Enums.Timeframe.H4 => TimeSpan.FromHours(4),
+            CryptoEvaluator.Domain.Enums.Timeframe.D1 => TimeSpan.FromDays(1),
+            _ => TimeSpan.FromHours(1)
+        };
+        DateTime lastClose = closedCandles[^1].CloseTime ?? closedCandles[^1].OpenTime + duration;
+        int ageSeconds = Math.Max(0, (int)(DateTime.UtcNow - lastClose).TotalSeconds);
+        bool isStale = DateTime.UtcNow - lastClose > duration * 2;
+
+        return new PredictionDataQualityDto(
+            IsSufficient: closedCandles.Count >= 30,
+            ClosedCandleCount: closedCandles.Count,
+            LastClosedCandleTime: lastClose,
+            DataAgeSeconds: ageSeconds,
+            IsStale: isStale,
+            Source: "Binance Futures live candles");
     }
 }
