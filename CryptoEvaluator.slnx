@@ -1,0 +1,13 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/CryptoEvaluator.API/CryptoEvaluator.API.csproj" />
+    <Project Path="src/CryptoEvaluator.Application/CryptoEvaluator.Application.csproj" />
+    <Project Path="src/CryptoEvaluator.Domain/CryptoEvaluator.Domain.csproj" />
+    <Project Path="src/CryptoEvaluator.Infrastructure/CryptoEvaluator.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/CryptoEvaluator.Application.Tests/CryptoEvaluator.Application.Tests.csproj" />
+    <Project Path="tests/CryptoEvaluator.Domain.Tests/CryptoEvaluator.Domain.Tests.csproj" />
+    <Project Path="tests/CryptoEvaluator.IntegrationTests/CryptoEvaluator.IntegrationTests.csproj" />
+  </Folder>
+</Solution>
