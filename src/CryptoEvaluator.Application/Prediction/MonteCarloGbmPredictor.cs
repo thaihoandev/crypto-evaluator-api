@@ -250,11 +250,11 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
             .OrderBy(x => x.price)
             .ToList();
 
-        (string Name, double Percentile)[] scenarios =
-        [ ("Bear", 0.10), ("Base", 0.50), ("Bull", 0.90) ];
+        (PredictionScenario Scenario, double Percentile)[] scenarios =
+        [ (PredictionScenario.Bear, 0.10), (PredictionScenario.Base, 0.50), (PredictionScenario.Bull, 0.90) ];
 
         var result = new List<ScenarioPathDto>(scenarios.Length);
-        foreach (var (name, percentile) in scenarios)
+        foreach (var (scenario, percentile) in scenarios)
         {
             int rank = (int)Math.Round(percentile * (ordered.Count - 1));
             int pathIndex = ordered[rank].index;
@@ -280,7 +280,7 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
                     ExpectedClose: RoundPrice(close)));
             }
 
-            result.Add(new ScenarioPathDto(name, points));
+            result.Add(new ScenarioPathDto(scenario, points));
         }
 
         return result;
@@ -332,7 +332,12 @@ public class MonteCarloGbmPredictor : ITradePredictionEngine
         }
 
         score = Math.Round(Math.Clamp(score, 0m, 100m), 1);
-        string level = score switch { >= 80m => "High", >= 60m => "Medium", _ => "Low" };
+        PredictionConfidenceLevel level = score switch
+        {
+            >= 80m => PredictionConfidenceLevel.High,
+            >= 60m => PredictionConfidenceLevel.Medium,
+            _ => PredictionConfidenceLevel.Low
+        };
         return new PredictionConfidenceDto(score, level, factors);
     }
 

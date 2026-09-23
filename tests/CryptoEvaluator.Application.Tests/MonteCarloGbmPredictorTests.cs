@@ -60,7 +60,8 @@ public class MonteCarloGbmPredictorTests
         result1.ExpectedRMultiple.Should().Be(result2.ExpectedRMultiple);
         (result1.WinProbability + result1.LossProbability + result1.NoHitProbability).Should().Be(100.0m);
         result1.ScenarioPaths.Should().NotBeNull();
-        result1.ScenarioPaths!.Select(path => path.Name).Should().Equal("Bear", "Base", "Bull");
+        result1.ScenarioPaths!.Select(path => path.Name).Should().Equal(
+            PredictionScenario.Bear, PredictionScenario.Base, PredictionScenario.Bull);
         result1.ScenarioPaths.Should().OnlyContain(path => path.Points.Count == 26);
 
         // Scenario lines must be coherent simulations and therefore separate at

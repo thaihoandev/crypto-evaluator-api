@@ -1,6 +1,7 @@
 using CryptoEvaluator.Application.Evaluations.Commands.EvaluateTrade;
 using CryptoEvaluator.Application.Evaluations.Models;
 using CryptoEvaluator.Application.MarketData.Interfaces;
+using CryptoEvaluator.Application.MarketAnalysis.Queries.AnalyzeMarket;
 using CryptoEvaluator.Application.Predictions.Queries.GetPrediction;
 using CryptoEvaluator.Application.Predictions.Queries.GetPredictionBacktest;
 using CryptoEvaluator.Application.Trades.Commands.CloseTrade;
@@ -179,6 +180,22 @@ public class TradesController : ControllerBase
     {
         var symbols = await _marketDataProvider.GetSymbolsAsync(cancellationToken);
         return Ok(symbols);
+    }
+
+    /// <summary>
+    /// Analyze a crypto market before creating a trade. Returns Long, Short, and
+    /// Wait guidance with proposed ATR-based entry, stop, target, and prediction.
+    /// </summary>
+    [HttpGet("analyze/{symbol}")]
+    [ProducesResponseType(typeof(MarketAnalysisResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> AnalyzeMarket(
+        string symbol,
+        [FromQuery] Timeframe timeframe = Timeframe.H1,
+        CancellationToken cancellationToken = default)
+    {
+        var result = await _sender.Send(new AnalyzeMarketQuery(symbol, timeframe), cancellationToken);
+        return Ok(result);
     }
 }
 

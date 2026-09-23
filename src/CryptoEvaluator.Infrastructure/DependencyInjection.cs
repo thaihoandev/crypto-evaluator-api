@@ -44,6 +44,9 @@ public static class DependencyInjection
 		// Market Data Options
 		services.Configure<MarketDataOptions>(
 			configuration.GetSection(MarketDataOptions.SectionName));
+		services.AddSingleton(
+			configuration.GetSection(MarketAnalysisOptions.SectionName).Get<MarketAnalysisOptions>()
+			?? new MarketAnalysisOptions());
 
 		// Binance Market Data HTTP Client
 		services.AddHttpClient<IMarketDataProvider, BinanceMarketDataProvider>(

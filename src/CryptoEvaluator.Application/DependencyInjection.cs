@@ -1,4 +1,5 @@
 using CryptoEvaluator.Application.Indicators;
+using CryptoEvaluator.Application.MarketAnalysis;
 using CryptoEvaluator.Application.Indicators.ATR;
 using CryptoEvaluator.Application.Indicators.EMA;
 using CryptoEvaluator.Application.Indicators.RSI;
@@ -28,6 +29,7 @@ public static class DependencyInjection
         services.AddTransient<ITradePredictionEngine, MonteCarloGbmPredictor>();
         services.AddTransient<IHistoricalAnalogPredictor, HistoricalAnalogPredictor>();
         services.AddTransient<IWarningEngine, WarningEngine>();
+        services.AddTransient<IMarketStructureAnalyzer, MarketStructureAnalyzer>();
 
         return services;
     }

@@ -62,7 +62,7 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
 
         // 1. Fetch Market Data from Market Provider
         var candles = await _marketDataProvider.GetCandlesAsync(
-            trade.Symbol, trade.Timeframe, limit: 250, cancellationToken);
+            trade.Symbol, trade.Timeframe, limit: 300, cancellationToken);
 
         // Never calibrate on Binance's still-open candle: its close/high/low change
         // until the interval ends and make the prediction non-reproducible.
@@ -70,9 +70,9 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
             .Where(c => c.CloseTime is null || c.CloseTime <= DateTime.UtcNow)
             .ToList();
 
-        if (closedCandles.Count < 30)
+        if (closedCandles.Count < 250)
         {
-            throw new InvalidOperationException($"At least 30 closed market candles are required to evaluate '{trade.Symbol}' on timeframe '{trade.Timeframe}'.");
+            throw new InvalidOperationException($"At least 250 closed market candles are required to evaluate '{trade.Symbol}' on timeframe '{trade.Timeframe}'.");
         }
 
         // 2. Calculate Indicators
@@ -208,16 +208,17 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
             CryptoEvaluator.Domain.Enums.Timeframe.D1 => TimeSpan.FromDays(1),
             _ => TimeSpan.FromHours(1)
         };
-        DateTime lastClose = closedCandles[^1].CloseTime ?? closedCandles[^1].OpenTime + duration;
+        DateTime lastCloseRaw = closedCandles[^1].CloseTime ?? closedCandles[^1].OpenTime + duration;
+        DateTime lastClose = DateTime.SpecifyKind(lastCloseRaw, DateTimeKind.Utc);
         int ageSeconds = Math.Max(0, (int)(DateTime.UtcNow - lastClose).TotalSeconds);
         bool isStale = DateTime.UtcNow - lastClose > duration * 2;
 
         return new PredictionDataQualityDto(
-            IsSufficient: closedCandles.Count >= 30,
+            IsSufficient: closedCandles.Count >= 250,
             ClosedCandleCount: closedCandles.Count,
             LastClosedCandleTime: lastClose,
             DataAgeSeconds: ageSeconds,
             IsStale: isStale,
-            Source: "Binance Futures live candles");
+            Source: CryptoEvaluator.Domain.Enums.MarketDataSource.BinanceFutures);
     }
 }

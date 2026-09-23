@@ -1,4 +1,5 @@
 using CryptoEvaluator.Domain.Models;
+using CryptoEvaluator.Domain.Enums;
 
 namespace CryptoEvaluator.Application.Evaluations.Models;
 
@@ -51,7 +52,7 @@ public record TrajectoryPointDto(
 // A coherent simulated path, intended for rendering a scenario line or candles.
 // Unlike the percentile envelope above, every point belongs to the same simulation.
 public record ScenarioPathDto(
-    string Name,
+    PredictionScenario Name,
     IReadOnlyList<TrajectoryPointDto> Points);
 
 public record PredictionDataQualityDto(
@@ -60,11 +61,11 @@ public record PredictionDataQualityDto(
     DateTime LastClosedCandleTime,
     int DataAgeSeconds,
     bool IsStale,
-    string Source);
+    MarketDataSource Source);
 
 public record PredictionConfidenceDto(
     decimal Score,
-    string Level,
+    PredictionConfidenceLevel Level,
     IReadOnlyList<string> Factors);
 
 public record TradePredictionDto(
