@@ -1,5 +1,7 @@
 using System.Text.Json.Serialization;
+using CryptoEvaluator.API.ModelBinding;
 using CryptoEvaluator.API.Middleware;
+using CryptoEvaluator.API.Serialization;
 using CryptoEvaluator.Application;
 using CryptoEvaluator.Infrastructure;
 using Scalar.AspNetCore;
@@ -11,7 +13,11 @@ builder.Services.AddControllers()
     .AddJsonOptions(options =>
     {
         options.JsonSerializerOptions.Converters.Add(new JsonStringEnumConverter());
+        options.JsonSerializerOptions.Converters.Add(new UtcDateTimeJsonConverter());
     });
+
+builder.Services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(options =>
+    options.ModelBinderProviders.Insert(0, new UtcDateTimeModelBinderProvider()));
 
 builder.Services.AddCors(options =>
 {

@@ -7,6 +7,7 @@ using CryptoEvaluator.Application.Predictions.Queries.GetPredictionBacktest;
 using CryptoEvaluator.Application.Trades.Commands.CloseTrade;
 using CryptoEvaluator.Application.Trades.Commands.CreateTrade;
 using CryptoEvaluator.Application.Trades.Models;
+using CryptoEvaluator.API.Serialization;
 using CryptoEvaluator.Application.Trades.Queries.GetTrade;
 using CryptoEvaluator.Application.Trades.Queries.GetTrades;
 using CryptoEvaluator.Domain.Enums;
@@ -151,11 +152,17 @@ public class TradesController : ControllerBase
         [FromQuery] DateTime? to,
         CancellationToken cancellationToken)
     {
+        from = NormalizeUtc(from);
+        to = NormalizeUtc(to);
+
         if (from.HasValue && to.HasValue && from > to)
             return BadRequest(new { code = "INVALID_DATE_RANGE", message = "'from' must not be later than 'to'." });
 
         return Ok(await _sender.Send(new GetPredictionBacktestQuery(from, to), cancellationToken));
     }
+
+    private static DateTime? NormalizeUtc(DateTime? value) =>
+        value.HasValue ? UtcDateTimeJsonConverter.ToUtc(value.Value) : null;
 
     /// <summary>
     /// Get real-time price ticker for a specific crypto symbol from Binance

@@ -30,15 +30,31 @@ public class TradesControllerIntegrationTests : IClassFixture<WebApplicationFact
     [Fact]
     public async Task CreateAndEvaluateTrade_EndToEndFlow_ShouldReturn200AndValidEvaluation()
     {
+        // 0. Fetch current ticker price so SL/TP are relative to current market price
+        decimal currentPrice = 100000m;
+        var tickerResponse = await _client.GetAsync("/api/v1/trades/ticker/BTCUSDT");
+        if (tickerResponse.IsSuccessStatusCode)
+        {
+            using var doc = await JsonDocument.ParseAsync(await tickerResponse.Content.ReadAsStreamAsync());
+            if (doc.RootElement.TryGetProperty("price", out var priceElement) && priceElement.GetDecimal() > 0)
+            {
+                currentPrice = priceElement.GetDecimal();
+            }
+        }
+
+        decimal entryPrice = Math.Round(currentPrice, 2);
+        decimal stopLoss = Math.Round(currentPrice * 0.98m, 2);
+        decimal takeProfit = Math.Round(currentPrice * 1.04m, 2);
+
         // 1. Create Trade
         var createRequest = new CreateTradeRequest(
             UserId: Guid.NewGuid(),
             Symbol: "BTCUSDT",
             Direction: TradeDirection.Long,
             Timeframe: Timeframe.H1,
-            EntryPrice: 104500m,
-            StopLoss: 102500m,
-            TakeProfit: 108500m,
+            EntryPrice: entryPrice,
+            StopLoss: stopLoss,
+            TakeProfit: takeProfit,
             AccountBalance: 10000m,
             RiskPercent: 1.0m,
             Leverage: 5m);
@@ -49,6 +65,7 @@ public class TradesControllerIntegrationTests : IClassFixture<WebApplicationFact
         var trade = await createResponse.Content.ReadFromJsonAsync<TradeResponse>(JsonOptions);
         trade.Should().NotBeNull();
         trade!.Symbol.Should().Be("BTCUSDT");
+
 
         // 2. Evaluate Trade (fetches candles from market provider, calculates indicators, score, Monte Carlo prediction)
         var evalRequest = new EvaluateTradeRequest(RandomSeed: 42);
