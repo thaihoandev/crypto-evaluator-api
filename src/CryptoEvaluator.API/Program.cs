@@ -19,11 +19,18 @@ builder.Services.AddControllers()
 builder.Services.Configure<Microsoft.AspNetCore.Mvc.MvcOptions>(options =>
     options.ModelBinderProviders.Insert(0, new UtcDateTimeModelBinderProvider()));
 
+// CORS: merge defaults with any extra origins from config (e.g. Render env var)
+var defaultOrigins = new[] { "http://localhost:3000", "https://localhost:3000", "http://localhost:5173" };
+var extraOrigins = builder.Configuration["Cors:AllowedOrigins"]
+    ?.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+    ?? [];
+var allOrigins = defaultOrigins.Union(extraOrigins).ToArray();
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
-        policy.WithOrigins("http://localhost:3000", "https://localhost:3000", "http://localhost:5173")
+        policy.WithOrigins(allOrigins)
               .AllowAnyHeader()
               .AllowAnyMethod();
     });
@@ -68,7 +75,8 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseCors("AllowFrontend");
-app.UseHttpsRedirection();
+// NOTE: HttpsRedirection removed — Render terminates TLS at the load balancer;
+// the container itself receives plain HTTP on the PORT env var.
 app.UseAuthorization();
 app.MapControllers();
 
