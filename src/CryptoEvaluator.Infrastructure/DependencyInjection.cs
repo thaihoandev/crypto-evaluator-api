@@ -30,7 +30,11 @@ public static class DependencyInjection
 		}
 
 		services.AddDbContext<AppDbContext>(options =>
-			options.UseNpgsql(connectionString));
+			options.UseNpgsql(connectionString, npgsqlOptions =>
+				npgsqlOptions.EnableRetryOnFailure(
+					maxRetryCount: 3,
+					maxRetryDelay: TimeSpan.FromSeconds(5),
+					errorCodesToAdd: null)));
 
 		// Unit of Work
 		services.AddScoped<IUnitOfWork>(

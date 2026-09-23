@@ -4,6 +4,8 @@ using CryptoEvaluator.API.Middleware;
 using CryptoEvaluator.API.Serialization;
 using CryptoEvaluator.Application;
 using CryptoEvaluator.Infrastructure;
+using CryptoEvaluator.Infrastructure.Persistence;
+using Microsoft.EntityFrameworkCore;
 using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -57,6 +59,13 @@ builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
 var app = builder.Build();
+
+// Auto-apply EF Core migrations on startup (safe for Render deploy)
+using (var scope = app.Services.CreateScope())
+{
+    var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await db.Database.MigrateAsync();
+}
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 

@@ -22,7 +22,9 @@ public class ExceptionHandlingMiddleware
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "An unhandled exception occurred during request execution.");
+            // Log full exception chain so Render logs show the real root cause
+            _logger.LogError(ex, "Unhandled exception: {Message}. InnerException: {Inner}",
+                ex.Message, ex.InnerException?.Message ?? "none");
             await HandleExceptionAsync(context, ex);
         }
     }
