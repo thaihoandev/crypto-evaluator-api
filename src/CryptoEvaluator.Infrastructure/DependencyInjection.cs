@@ -1,4 +1,4 @@
-﻿using CryptoEvaluator.Application.Common.Options;
+using CryptoEvaluator.Application.Common.Options;
 using CryptoEvaluator.Application.MarketData.Interfaces;
 using CryptoEvaluator.Domain.Interfaces;
 using CryptoEvaluator.Infrastructure.MarketData.Binance;
@@ -16,130 +16,139 @@ namespace CryptoEvaluator.Infrastructure;
 
 public static class DependencyInjection
 {
-	public static IServiceCollection AddInfrastructure(
-		this IServiceCollection services,
-		IConfiguration configuration)
-	{
-		// Database
-		var connectionString =
-			configuration.GetConnectionString("DefaultConnection");
+    public static IServiceCollection AddInfrastructure(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        // Database
+        var connectionString =
+            configuration.GetConnectionString("DefaultConnection");
 
-		if (string.IsNullOrWhiteSpace(connectionString))
-		{
-			throw new InvalidOperationException(
-				"Connection string 'DefaultConnection' is not configured.");
-		}
+        if (string.IsNullOrWhiteSpace(connectionString))
+        {
+            throw new InvalidOperationException(
+                "Connection string 'DefaultConnection' is not configured.");
+        }
 
-		services.AddDbContext<AppDbContext>(options =>
-			options.UseNpgsql(connectionString, npgsqlOptions =>
-				npgsqlOptions.EnableRetryOnFailure(
-					maxRetryCount: 3,
-					maxRetryDelay: TimeSpan.FromSeconds(5),
-					errorCodesToAdd: null)));
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseNpgsql(connectionString, npgsqlOptions =>
+                npgsqlOptions.EnableRetryOnFailure(
+                    maxRetryCount: 3,
+                    maxRetryDelay: TimeSpan.FromSeconds(5),
+                    errorCodesToAdd: null)));
 
-		// Unit of Work
-		services.AddScoped<IUnitOfWork>(
-			sp => sp.GetRequiredService<AppDbContext>());
+        // Unit of Work
+        services.AddScoped<IUnitOfWork>(
+            sp => sp.GetRequiredService<AppDbContext>());
 
-		// Repositories
-		services.AddScoped<ITradeRepository, TradeRepository>();
-		services.AddScoped<ITradeEvaluationRepository, TradeEvaluationRepository>();
-		services.AddScoped<ITradePredictionRepository, TradePredictionRepository>();
+        // Repositories
+        services.AddScoped<ITradeRepository, TradeRepository>();
+        services.AddScoped<ITradeEvaluationRepository, TradeEvaluationRepository>();
+        services.AddScoped<ITradePredictionRepository, TradePredictionRepository>();
 
-		// Market Data Options
-		services.Configure<MarketDataOptions>(
-			configuration.GetSection(MarketDataOptions.SectionName));
-		services.AddSingleton(
-			configuration.GetSection(MarketAnalysisOptions.SectionName).Get<MarketAnalysisOptions>()
-			?? new MarketAnalysisOptions());
-		// Register MarketDataOptions as plain singleton so Application handlers can inject it directly
-		services.AddSingleton(sp =>
-		{
-			var opts = new MarketDataOptions();
-			configuration.GetSection(MarketDataOptions.SectionName).Bind(opts);
-			return opts;
-		});
+        // Market Data Options
+        services.Configure<MarketDataOptions>(
+            configuration.GetSection(MarketDataOptions.SectionName));
+        services.AddSingleton(
+            configuration.GetSection(MarketAnalysisOptions.SectionName).Get<MarketAnalysisOptions>()
+            ?? new MarketAnalysisOptions());
+        // Register MarketDataOptions as plain singleton so Application handlers can inject it directly
+        services.AddSingleton(sp =>
+        {
+            var opts = new MarketDataOptions();
+            configuration.GetSection(MarketDataOptions.SectionName).Bind(opts);
+            return opts;
+        });
 
-		// Binance Market Data HTTP Client
-		services.AddHttpClient<IMarketDataProvider, BinanceMarketDataProvider>(
-			(sp, client) =>
-			{
-				var options =
-					sp.GetRequiredService<IOptions<MarketDataOptions>>().Value;
+        // Binance Market Data HTTP Client
+        services.AddHttpClient<IMarketDataProvider, BinanceMarketDataProvider>(
+            (sp, client) =>
+            {
+                var options =
+                    sp.GetRequiredService<IOptions<MarketDataOptions>>().Value;
 
-				if (!string.IsNullOrWhiteSpace(options.BaseUrl))
-				{
-					client.BaseAddress = new Uri(options.BaseUrl);
-				}
+                if (!string.IsNullOrWhiteSpace(options.BaseUrl))
+                {
+                    client.BaseAddress = new Uri(options.BaseUrl);
+                }
 
-				client.Timeout =
-					TimeSpan.FromSeconds(options.TimeoutSeconds);
-			})
-			.AddPolicyHandler(
-				HttpPolicyExtensions
-					.HandleTransientHttpError()
-					.WaitAndRetryAsync(
-						2,
-						retryAttempt =>
-							TimeSpan.FromMilliseconds(
-								500 * Math.Pow(2, retryAttempt))));
+                client.Timeout =
+                    TimeSpan.FromSeconds(options.TimeoutSeconds);
+            })
+            .AddPolicyHandler(
+                HttpPolicyExtensions
+                    .HandleTransientHttpError()
+                    .WaitAndRetryAsync(
+                        2,
+                        retryAttempt =>
+                            TimeSpan.FromMilliseconds(
+                                500 * Math.Pow(2, retryAttempt))));
 
-		// Redis / Memory Cache
-		var redisConnection =
-			configuration.GetConnectionString("Redis");
+        // Redis / Memory Cache
+        var redisConnection =
+            configuration.GetConnectionString("Redis");
 
-		if (!string.IsNullOrWhiteSpace(redisConnection))
-		{
-			var redisUri = new Uri(redisConnection);
+        if (!string.IsNullOrWhiteSpace(redisConnection))
+        {
+            ConfigurationOptions redisOptions;
 
-			var userInfo = redisUri.UserInfo.Split(':', 2);
+            if (redisConnection.StartsWith("redis://", StringComparison.OrdinalIgnoreCase) ||
+                redisConnection.StartsWith("rediss://", StringComparison.OrdinalIgnoreCase))
+            {
+                var redisUri = new Uri(redisConnection);
+                var userInfo = redisUri.UserInfo.Split(':', 2);
 
-			if (string.IsNullOrWhiteSpace(redisUri.Host))
-			{
-				throw new InvalidOperationException(
-					$"Invalid Redis URL: host is empty. URL: {redisConnection}");
-			}
+                if (string.IsNullOrWhiteSpace(redisUri.Host))
+                {
+                    throw new InvalidOperationException(
+                        $"Invalid Redis URL: host is empty. URL: {redisConnection}");
+                }
 
-			var redisOptions = new ConfigurationOptions();
+                redisOptions = new ConfigurationOptions();
+                redisOptions.EndPoints.Add(
+                    redisUri.Host,
+                    redisUri.Port > 0 ? redisUri.Port : 6379);
 
-			redisOptions.EndPoints.Add(
-				redisUri.Host,
-				redisUri.Port > 0 ? redisUri.Port : 6379);
+                redisOptions.Ssl =
+                    redisUri.Scheme.Equals(
+                        "rediss",
+                        StringComparison.OrdinalIgnoreCase);
 
-			redisOptions.Ssl =
-				redisUri.Scheme.Equals(
-					"rediss",
-					StringComparison.OrdinalIgnoreCase);
+                redisOptions.AbortOnConnectFail = false;
 
-			redisOptions.AbortOnConnectFail = false;
+                if (userInfo.Length == 2)
+                {
+                    redisOptions.User =
+                        Uri.UnescapeDataString(userInfo[0]);
 
-			if (userInfo.Length == 2)
-			{
-				redisOptions.User =
-					Uri.UnescapeDataString(userInfo[0]);
+                    redisOptions.Password =
+                        Uri.UnescapeDataString(userInfo[1]);
+                }
+            }
+            else
+            {
+                // Standard StackExchange.Redis connection string (e.g. Azure Redis: "host:port,password=...,ssl=True")
+                redisOptions = ConfigurationOptions.Parse(redisConnection);
+                redisOptions.AbortOnConnectFail = false;
+            }
 
-				redisOptions.Password =
-					Uri.UnescapeDataString(userInfo[1]);
-			}
+            services.AddStackExchangeRedisCache(options =>
+            {
+                options.ConfigurationOptions = redisOptions;
+                options.InstanceName = "CryptoEvaluator:";
+            });
+        }
+        else
+        {
+            services.AddDistributedMemoryCache();
+        }
 
-			services.AddStackExchangeRedisCache(options =>
-			{
-				options.ConfigurationOptions = redisOptions;
-				options.InstanceName = "CryptoEvaluator:";
-			});
-		}
-		else
-		{
-			services.AddDistributedMemoryCache();
-		}
+        // Binance Futures WebSocket ticker background service
+        // Maintains a persistent WS stream -> writes real-time prices to cache
+        // BinanceMarketDataProvider.GetTickerAsync reads from cache first (sub-ms)
+        services.AddSingleton<RealtimeTickerStore>();
+        services.AddHostedService<BinanceTickerWebSocketService>();
 
-		// Binance Futures WebSocket ticker background service
-		// Maintains a persistent WS stream â†’ writes real-time prices to cache
-		// BinanceMarketDataProvider.GetTickerAsync reads from cache first (sub-ms)
-		services.AddSingleton<RealtimeTickerStore>();
-		services.AddHostedService<BinanceTickerWebSocketService>();
-
-		return services;
-	}
+        return services;
+    }
 }
-

@@ -256,20 +256,21 @@ public sealed class BinanceTickerWebSocketService : BackgroundService
     }
 
     private readonly ConcurrentDictionary<string, DateTime> _lastRedisWrite = new(StringComparer.OrdinalIgnoreCase);
-    private static readonly TimeSpan MinRedisWriteInterval = TimeSpan.FromSeconds(2); // Write to Redis max once per 2s per symbol
 
     private void StoreTicker(RealtimeTicker ticker, CancellationToken cancellationToken)
     {
         // 1. Instant update in local memory (0 network latency)
         _tickerStore.Set(ticker);
 
-        // 2. Throttle Redis writes to reduce Redis I/O overhead by >90%
+        // 2. Throttle Redis writes — only once per TickerRedisWriteIntervalSeconds per symbol.
+        //    All same-process reads hit RealtimeTickerStore first (0 Redis reads).
         var cache = _cache;
         if (cache != null)
         {
             var now = DateTime.UtcNow;
             var lastWrite = _lastRedisWrite.TryGetValue(ticker.Symbol, out var dt) ? dt : DateTime.MinValue;
-            if (now - lastWrite >= MinRedisWriteInterval)
+            var interval = TimeSpan.FromSeconds(Math.Max(1, _options.TickerRedisWriteIntervalSeconds));
+            if (now - lastWrite >= interval)
             {
                 _lastRedisWrite[ticker.Symbol] = now;
                 _ = WriteDistributedTickerAsync(cache, ticker, cancellationToken);
@@ -286,10 +287,10 @@ public sealed class BinanceTickerWebSocketService : BackgroundService
         {
             string cacheKey = $"{CacheKeyPrefix}{ticker.Symbol.ToUpperInvariant()}";
             byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(ticker);
+            int ttlSeconds = _options.TickerRedisCacheTtlSeconds > 0 ? _options.TickerRedisCacheTtlSeconds : 300;
             await cache.SetAsync(cacheKey, bytes, new DistributedCacheEntryOptions
             {
-                // TTL: 10 seconds — if WS dies, callers fall back to HTTP
-                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(10)
+                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(ttlSeconds)
             }, cancellationToken);
 
             if (_redisStoredSymbols.TryAdd(ticker.Symbol, 0))

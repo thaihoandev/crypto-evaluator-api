@@ -24,6 +24,18 @@ public class MarketDataOptions
     public int CacheTtlSeconds { get; set; } = 30;
 
     /// <summary>
+    /// How often (in seconds) real-time WebSocket ticker updates are persisted to Redis per symbol.
+    /// Defaults to 60 s (1 minute) to minimize Redis write operations.
+    /// </summary>
+    public int TickerRedisWriteIntervalSeconds { get; set; } = 60;
+
+    /// <summary>
+    /// TTL (in seconds) for real-time WebSocket ticker entries in Redis.
+    /// Defaults to 300 s (5 minutes).
+    /// </summary>
+    public int TickerRedisCacheTtlSeconds { get; set; } = 300;
+
+    /// <summary>
     /// How long (seconds) a completed market analysis result is cached in Redis.
     /// The cache key is keyed by symbol + timeframe + last-candle-close-time, so
     /// a new candle automatically busts the cache without waiting for expiry.
