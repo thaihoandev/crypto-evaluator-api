@@ -15,18 +15,21 @@ public class BinanceMarketDataProvider : IMarketDataProvider
     private readonly HttpClient _httpClient;
     private readonly MarketDataOptions _options;
     private readonly IDistributedCache? _cache;
+    private readonly RealtimeTickerStore? _tickerStore;
     private readonly ILogger<BinanceMarketDataProvider> _logger;
 
     public BinanceMarketDataProvider(
         HttpClient httpClient,
         IOptions<MarketDataOptions> options,
         ILogger<BinanceMarketDataProvider> logger,
-        IDistributedCache? cache = null)
+        IDistributedCache? cache = null,
+        RealtimeTickerStore? tickerStore = null)
     {
         _httpClient = httpClient;
         _options = options.Value;
         _logger = logger;
         _cache = cache;
+        _tickerStore = tickerStore;
 
         if (_httpClient.BaseAddress == null && !string.IsNullOrWhiteSpace(_options.BaseUrl))
         {
@@ -130,7 +133,13 @@ public class BinanceMarketDataProvider : IMarketDataProvider
     {
         string binanceSymbol = symbol.ToUpperInvariant().Trim();
 
-        // ── 1. Try real-time WS cache (written by BinanceTickerWebSocketService) ──
+        // ── 0. Try process-local in-memory store first (0ms latency, 0 Redis reads) ──
+        if (_tickerStore != null && _tickerStore.TryGet(binanceSymbol, out var localTicker) && localTicker != null && localTicker.Price > 0)
+        {
+            return new MarketTicker(binanceSymbol, localTicker.Price, localTicker.UpdatedAt);
+        }
+
+        // ── 1. Try real-time WS cache in Redis ──
         if (_cache != null)
         {
             try

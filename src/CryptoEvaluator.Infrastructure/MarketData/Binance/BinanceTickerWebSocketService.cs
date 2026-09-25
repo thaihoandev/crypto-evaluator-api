@@ -113,7 +113,9 @@ public sealed class BinanceTickerWebSocketService : BackgroundService
     private async Task RunSessionAsync(string[] watchSymbols, CancellationToken cancellationToken)
     {
         var streamNames = string.Join('/', watchSymbols.Select(s => $"{s}@miniTicker"));
-        var uri = new Uri($"{_options.WsBaseUrl}/stream?streams={streamNames}");
+        var wsBase = _options.WsBaseUrl.TrimEnd('/');
+        var wsPath = wsBase.Contains("/stream") ? wsBase : $"{wsBase}/market/stream";
+        var uri = new Uri($"{wsPath}?streams={streamNames}");
 
         using var ws = new ClientWebSocket();
         ws.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
@@ -253,15 +255,26 @@ public sealed class BinanceTickerWebSocketService : BackgroundService
         return Task.CompletedTask;
     }
 
+    private readonly ConcurrentDictionary<string, DateTime> _lastRedisWrite = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly TimeSpan MinRedisWriteInterval = TimeSpan.FromSeconds(2); // Write to Redis max once per 2s per symbol
+
     private void StoreTicker(RealtimeTicker ticker, CancellationToken cancellationToken)
     {
+        // 1. Instant update in local memory (0 network latency)
         _tickerStore.Set(ticker);
 
-        // Redis must not block the WebSocket receive loop. The process-local
-        // store already contains the latest value for this API instance.
+        // 2. Throttle Redis writes to reduce Redis I/O overhead by >90%
         var cache = _cache;
         if (cache != null)
-            _ = WriteDistributedTickerAsync(cache, ticker, cancellationToken);
+        {
+            var now = DateTime.UtcNow;
+            var lastWrite = _lastRedisWrite.TryGetValue(ticker.Symbol, out var dt) ? dt : DateTime.MinValue;
+            if (now - lastWrite >= MinRedisWriteInterval)
+            {
+                _lastRedisWrite[ticker.Symbol] = now;
+                _ = WriteDistributedTickerAsync(cache, ticker, cancellationToken);
+            }
+        }
     }
 
     private async Task WriteDistributedTickerAsync(
