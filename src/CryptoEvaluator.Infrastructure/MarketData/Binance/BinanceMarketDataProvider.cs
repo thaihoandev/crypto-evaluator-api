@@ -102,9 +102,13 @@ public class BinanceMarketDataProvider : IMarketDataProvider
                         try
                         {
                             var bytes = JsonSerializer.SerializeToUtf8Bytes(candles);
+                            // Use timeframe-aware TTL: cache for ~80% of the candle duration
+                            // so we re-fetch before the next candle is likely to close.
+                            // Floor at CacheTtlSeconds to avoid sub-second values on M1.
+                            int timeframeTtl = GetTimeframeCacheTtl(timeframe, _options.CacheTtlSeconds);
                             await _cache.SetAsync(cacheKey, bytes, new DistributedCacheEntryOptions
                             {
-                                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(_options.CacheTtlSeconds)
+                                AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(timeframeTtl)
                             }, cancellationToken);
                         }
                         catch (Exception ex)
@@ -302,6 +306,28 @@ public class BinanceMarketDataProvider : IMarketDataProvider
         Timeframe.D1 => "1d",
         _ => "1h"
     };
+
+    /// <summary>
+    /// Returns a candle cache TTL that is ~80 % of the timeframe duration so that
+    /// we always re-fetch from Binance before the current candle is likely to close.
+    /// Floored at <paramref name="minTtlSeconds"/> (the configured CacheTtlSeconds).
+    /// </summary>
+    private static int GetTimeframeCacheTtl(Timeframe timeframe, int minTtlSeconds)
+    {
+        int durationSeconds = timeframe switch
+        {
+            Timeframe.M1  => 60,
+            Timeframe.M5  => 300,
+            Timeframe.M15 => 900,
+            Timeframe.M30 => 1800,
+            Timeframe.H1  => 3600,
+            Timeframe.H4  => 14400,
+            Timeframe.D1  => 86400,
+            _             => 3600
+        };
+        // Use 80 % of the candle duration, but at least the configured minimum.
+        return Math.Max((int)(durationSeconds * 0.8), minTtlSeconds);
+    }
 
     private static IReadOnlyList<Candle> ExcludeOpenCandle(IEnumerable<Candle> candles)
     {

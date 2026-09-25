@@ -1,4 +1,4 @@
-using CryptoEvaluator.Application.Common.Options;
+﻿using CryptoEvaluator.Application.Common.Options;
 using CryptoEvaluator.Application.MarketData.Interfaces;
 using CryptoEvaluator.Domain.Interfaces;
 using CryptoEvaluator.Infrastructure.MarketData.Binance;
@@ -52,6 +52,13 @@ public static class DependencyInjection
 		services.AddSingleton(
 			configuration.GetSection(MarketAnalysisOptions.SectionName).Get<MarketAnalysisOptions>()
 			?? new MarketAnalysisOptions());
+		// Register MarketDataOptions as plain singleton so Application handlers can inject it directly
+		services.AddSingleton(sp =>
+		{
+			var opts = new MarketDataOptions();
+			configuration.GetSection(MarketDataOptions.SectionName).Bind(opts);
+			return opts;
+		});
 
 		// Binance Market Data HTTP Client
 		services.AddHttpClient<IMarketDataProvider, BinanceMarketDataProvider>(
@@ -127,7 +134,7 @@ public static class DependencyInjection
 		}
 
 		// Binance Futures WebSocket ticker background service
-		// Maintains a persistent WS stream → writes real-time prices to cache
+		// Maintains a persistent WS stream â†’ writes real-time prices to cache
 		// BinanceMarketDataProvider.GetTickerAsync reads from cache first (sub-ms)
 		services.AddSingleton<RealtimeTickerStore>();
 		services.AddHostedService<BinanceTickerWebSocketService>();

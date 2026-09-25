@@ -11,6 +11,8 @@ using CryptoEvaluator.Domain.Entities;
 using CryptoEvaluator.Domain.Enums;
 using CryptoEvaluator.Domain.Models;
 using MediatR;
+using Microsoft.Extensions.Caching.Distributed;
+using System.Text.Json;
 
 namespace CryptoEvaluator.Application.MarketAnalysis.Queries.AnalyzeMarket;
 
@@ -56,6 +58,8 @@ public class AnalyzeMarketQueryHandler : IRequestHandler<AnalyzeMarketQuery, Mar
     private readonly IWarningEngine _warningEngine;
     private readonly MarketAnalysisOptions _options;
     private readonly IMarketStructureAnalyzer _marketStructureAnalyzer;
+    private readonly IDistributedCache? _cache;
+    private readonly MarketDataOptions _marketDataOptions;
 
     public AnalyzeMarketQueryHandler(
         IMarketDataProvider marketDataProvider,
@@ -65,7 +69,9 @@ public class AnalyzeMarketQueryHandler : IRequestHandler<AnalyzeMarketQuery, Mar
         ITradeScoreCalculator scoreCalculator,
         IWarningEngine warningEngine,
         MarketAnalysisOptions options,
-        IMarketStructureAnalyzer marketStructureAnalyzer)
+        IMarketStructureAnalyzer marketStructureAnalyzer,
+        MarketDataOptions marketDataOptions,
+        IDistributedCache? cache = null)
     {
         _marketDataProvider = marketDataProvider;
         _indicatorEngine = indicatorEngine;
@@ -75,6 +81,8 @@ public class AnalyzeMarketQueryHandler : IRequestHandler<AnalyzeMarketQuery, Mar
         _warningEngine = warningEngine;
         _options = options;
         _marketStructureAnalyzer = marketStructureAnalyzer;
+        _marketDataOptions = marketDataOptions;
+        _cache = cache;
     }
 
     public async Task<MarketAnalysisResponse> Handle(AnalyzeMarketQuery request, CancellationToken cancellationToken)
@@ -88,6 +96,27 @@ public class AnalyzeMarketQueryHandler : IRequestHandler<AnalyzeMarketQuery, Mar
         if (closedCandles.Count < _options.MinimumClosedCandles)
             throw new InvalidOperationException(
                 $"At least {_options.MinimumClosedCandles} closed candles are required for market analysis.");
+
+        // ── Analysis result cache ────────────────────────────────────────────
+        // Key is keyed on the last closed candle's CloseTime (truncated to seconds)
+        // so the cache is automatically busted when a new candle forms, without
+        // relying on TTL expiry alone.
+        DateTime lastClose = closedCandles[^1].CloseTime ?? closedCandles[^1].OpenTime;
+        string analysisKey = $"market:analysis:v1:{request.Symbol.ToUpperInvariant()}:{request.Timeframe}:{lastClose:yyyyMMddHHmmss}";
+        if (_cache != null)
+        {
+            try
+            {
+                var cachedBytes = await _cache.GetAsync(analysisKey, cancellationToken);
+                if (cachedBytes != null)
+                {
+                    var cached = JsonSerializer.Deserialize<MarketAnalysisResponse>(cachedBytes);
+                    if (cached != null)
+                        return cached;
+                }
+            }
+            catch { /* ignore cache read errors — fall through to compute */ }
+        }
 
         var indicators = _indicatorEngine.CalculateAll(closedCandles);
         var quality = BuildDataQuality(closedCandles, request.Timeframe, _options.MinimumClosedCandles);
@@ -175,11 +204,27 @@ public class AnalyzeMarketQueryHandler : IRequestHandler<AnalyzeMarketQuery, Mar
             ? $"No setup meets the entry requirements: {string.Join(", ", blockers)}."
             : $"{preferred.Direction} has the stronger setup score ({preferred.SetupScore:F1}/100) with {preferred.Prediction.Confidence?.Level.ToString().ToLowerInvariant()} confidence.";
 
-        return new MarketAnalysisResponse(
+        var response = new MarketAnalysisResponse(
             request.Symbol.ToUpperInvariant().Trim(), request.Timeframe,
             new MarketSnapshotDto(indicators.CurrentPrice, indicators.Ema20, indicators.Ema50,
                 indicators.Ema200, indicators.Rsi, indicators.Atr, indicators.VolumeRatio),
             quality, recommendation, rationale, blockers, longSetup, shortSetup);
+
+        // ── Write result to cache ────────────────────────────────────────────
+        if (_cache != null)
+        {
+            try
+            {
+                var bytes = JsonSerializer.SerializeToUtf8Bytes(response);
+                await _cache.SetAsync(analysisKey, bytes, new DistributedCacheEntryOptions
+                {
+                    AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(_marketDataOptions.AnalysisCacheTtlSeconds)
+                }, cancellationToken);
+            }
+            catch { /* ignore cache write errors */ }
+        }
+
+        return response;
     }
 
     private IReadOnlyList<MarketAnalysisBlocker> GetBlockingReasons(

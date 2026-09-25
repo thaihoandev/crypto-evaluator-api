@@ -23,6 +23,14 @@ public class MarketDataOptions
     public int TimeoutSeconds { get; set; } = 10;
     public int CacheTtlSeconds { get; set; } = 30;
 
+    /// <summary>
+    /// How long (seconds) a completed market analysis result is cached in Redis.
+    /// The cache key is keyed by symbol + timeframe + last-candle-close-time, so
+    /// a new candle automatically busts the cache without waiting for expiry.
+    /// Defaults to 60 s as a safety net.
+    /// </summary>
+    public int AnalysisCacheTtlSeconds { get; set; } = 60;
+
     /// <summary>Parsed array of watch symbols from <see cref="WatchSymbols"/>.</summary>
     public string[] GetWatchSymbolArray() =>
         WatchSymbols
