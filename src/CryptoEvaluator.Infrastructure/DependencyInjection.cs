@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Polly;
 using Polly.Extensions.Http;
+using StackExchange.Redis;
 
 namespace CryptoEvaluator.Infrastructure;
 
@@ -82,9 +83,41 @@ public static class DependencyInjection
 
 		if (!string.IsNullOrWhiteSpace(redisConnection))
 		{
+			var redisUri = new Uri(redisConnection);
+
+			var userInfo = redisUri.UserInfo.Split(':', 2);
+
+			if (string.IsNullOrWhiteSpace(redisUri.Host))
+			{
+				throw new InvalidOperationException(
+					$"Invalid Redis URL: host is empty. URL: {redisConnection}");
+			}
+
+			var redisOptions = new ConfigurationOptions();
+
+			redisOptions.EndPoints.Add(
+				redisUri.Host,
+				redisUri.Port > 0 ? redisUri.Port : 6379);
+
+			redisOptions.Ssl =
+				redisUri.Scheme.Equals(
+					"rediss",
+					StringComparison.OrdinalIgnoreCase);
+
+			redisOptions.AbortOnConnectFail = false;
+
+			if (userInfo.Length == 2)
+			{
+				redisOptions.User =
+					Uri.UnescapeDataString(userInfo[0]);
+
+				redisOptions.Password =
+					Uri.UnescapeDataString(userInfo[1]);
+			}
+
 			services.AddStackExchangeRedisCache(options =>
 			{
-				options.Configuration = redisConnection;
+				options.ConfigurationOptions = redisOptions;
 				options.InstanceName = "CryptoEvaluator:";
 			});
 		}
@@ -93,6 +126,13 @@ public static class DependencyInjection
 			services.AddDistributedMemoryCache();
 		}
 
+		// Binance Futures WebSocket ticker background service
+		// Maintains a persistent WS stream → writes real-time prices to cache
+		// BinanceMarketDataProvider.GetTickerAsync reads from cache first (sub-ms)
+		services.AddSingleton<RealtimeTickerStore>();
+		services.AddHostedService<BinanceTickerWebSocketService>();
+
 		return services;
 	}
 }
+

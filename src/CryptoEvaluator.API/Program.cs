@@ -34,7 +34,8 @@ builder.Services.AddCors(options =>
     {
         policy.WithOrigins(allOrigins)
               .AllowAnyHeader()
-              .AllowAnyMethod();
+              .AllowAnyMethod()
+              .AllowCredentials(); // Required for SSE EventSource with credentials
     });
 });
 

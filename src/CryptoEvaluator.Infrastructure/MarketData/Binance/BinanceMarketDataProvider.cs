@@ -129,6 +129,30 @@ public class BinanceMarketDataProvider : IMarketDataProvider
         CancellationToken cancellationToken = default)
     {
         string binanceSymbol = symbol.ToUpperInvariant().Trim();
+
+        // ── 1. Try real-time WS cache (written by BinanceTickerWebSocketService) ──
+        if (_cache != null)
+        {
+            try
+            {
+                string wsCacheKey = $"{BinanceTickerWebSocketService.CacheKeyPrefix}{binanceSymbol}";
+                var cachedBytes = await _cache.GetAsync(wsCacheKey, cancellationToken);
+                if (cachedBytes != null)
+                {
+                    var realtimeTicker = JsonSerializer.Deserialize<RealtimeTicker>(cachedBytes);
+                    if (realtimeTicker != null && realtimeTicker.Price > 0)
+                    {
+                        return new MarketTicker(binanceSymbol, realtimeTicker.Price, realtimeTicker.UpdatedAt);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Failed to read WS ticker cache for {Symbol}, falling back to HTTP.", binanceSymbol);
+            }
+        }
+
+        // ── 2. Fallback: outbound HTTP request to Binance REST API ────────────
         try
         {
             string requestUri = $"/fapi/v1/ticker/price?symbol={binanceSymbol}";
@@ -150,6 +174,7 @@ public class BinanceMarketDataProvider : IMarketDataProvider
 
         return new MarketTicker(binanceSymbol, 100000m, DateTime.UtcNow);
     }
+
 
     public async Task<IReadOnlyList<CryptoSymbolInfo>> GetSymbolsAsync(CancellationToken cancellationToken = default)
     {
