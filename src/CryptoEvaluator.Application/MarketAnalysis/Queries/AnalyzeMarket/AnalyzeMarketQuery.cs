@@ -186,7 +186,7 @@ public class AnalyzeMarketQueryHandler : IRequestHandler<AnalyzeMarketQuery, Mar
             return new ProposedTradeSetupDto(
                 direction, entry, stop, take, zoneLow, zoneHigh, structure.Support, structure.Resistance,
                 stopSource, takeSource, risk.RiskRewardRatio, score.TotalScore,
-                tradable, prediction, _warningEngine.GenerateWarnings(trade, indicators, risk));
+                tradable, prediction, _warningEngine.GenerateWarnings(trade, indicators, risk, lastCandleTime));
         }
 
         var setups = new[] { longSetup, shortSetup };

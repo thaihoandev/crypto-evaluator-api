@@ -5,6 +5,7 @@ using CryptoEvaluator.Application.Indicators.EMA;
 using CryptoEvaluator.Application.Indicators.RSI;
 using CryptoEvaluator.Application.Indicators.Volume;
 using CryptoEvaluator.Application.Prediction;
+using CryptoEvaluator.Application.Predictions;
 using CryptoEvaluator.Application.Risk;
 using CryptoEvaluator.Application.Scoring;
 using CryptoEvaluator.Application.Warnings;
@@ -30,6 +31,8 @@ public static class DependencyInjection
         services.AddTransient<IHistoricalAnalogPredictor, HistoricalAnalogPredictor>();
         services.AddTransient<IWarningEngine, WarningEngine>();
         services.AddTransient<IMarketStructureAnalyzer, MarketStructureAnalyzer>();
+        services.AddTransient<IScoreWeightLearner, ScoreWeightLearner>();
+        services.AddTransient<IWalkForwardBacktestEngine, WalkForwardBacktestEngine>();
 
         return services;
     }

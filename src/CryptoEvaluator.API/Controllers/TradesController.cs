@@ -161,6 +161,24 @@ public class TradesController : ControllerBase
         return Ok(await _sender.Send(new GetPredictionBacktestQuery(from, to), cancellationToken));
     }
 
+    /// <summary>
+    /// Run a walk-forward rolling window backtest on historical market candles (§6 Extension).
+    /// </summary>
+    [HttpGet("predictions/walk-forward")]
+    [ProducesResponseType(typeof(CryptoEvaluator.Application.Predictions.WalkForwardReportDto), StatusCodes.Status200OK)]
+    public async Task<IActionResult> GetWalkForwardBacktest(
+        [FromQuery] string symbol = "BTCUSDT",
+        [FromQuery] Timeframe timeframe = Timeframe.H1,
+        [FromQuery] int trainSize = 200,
+        [FromQuery] int testHorizon = 50,
+        [FromQuery] [FromServices] CryptoEvaluator.Application.Predictions.IWalkForwardBacktestEngine backtestEngine = default!,
+        CancellationToken cancellationToken = default)
+    {
+        var candles = await _marketDataProvider.GetCandlesAsync(symbol, timeframe, trainSize + testHorizon + 50, cancellationToken);
+        var report = backtestEngine.RunBacktest(symbol, candles, trainSize, testHorizon);
+        return Ok(report);
+    }
+
     private static DateTime? NormalizeUtc(DateTime? value) =>
         value.HasValue ? UtcDateTimeJsonConverter.ToUtc(value.Value) : null;
 

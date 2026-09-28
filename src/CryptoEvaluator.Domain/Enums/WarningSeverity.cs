@@ -4,5 +4,6 @@ public enum WarningSeverity
 {
     Info = 1,
     Warning = 2,
-    Critical = 3
+    Danger = 3,
+    Critical = 4
 }

@@ -101,7 +101,7 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
             trade, indicators, closedCandles, lastCandleTime, effectiveSeed, numPaths: 20000);
 
         // 6. Generate Risk Warnings
-        var warnings = _warningEngine.GenerateWarnings(trade, indicators, risk);
+        var warnings = _warningEngine.GenerateWarnings(trade, indicators, risk, lastCandleTime);
 
         // 7. Increment Version and Save Evaluation & Snapshot
         int latestVersion = await _evaluationRepository.GetLatestVersionAsync(trade.Id, cancellationToken);
@@ -156,6 +156,14 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
             Volume: c.Volume
         )).ToList();
 
+        // §10 Kelly Fraction reference: f* = (P_win × RR − P_loss) / RR, then quarter-Kelly
+        decimal kellyFull = risk.RiskRewardRatio > 0
+            ? (predictionResult.WinProbability / 100m * risk.RiskRewardRatio
+               - (1m - predictionResult.WinProbability / 100m))
+              / risk.RiskRewardRatio
+            : 0m;
+        decimal kellySuggested = Math.Clamp(0.25m * kellyFull, 0m, 5m); // quarter-Kelly, max 5%
+
         return new EvaluateTradeResponse(
             TradeId: trade.Id,
             EvaluationId: evaluation.Id,
@@ -187,10 +195,13 @@ public class EvaluateTradeCommandHandler : IRequestHandler<EvaluateTradeCommand,
                 TrajectoryPoints: predictionResult.TrajectoryPoints,
                 ScenarioPaths: predictionResult.ScenarioPaths,
                 DataQuality: BuildDataQuality(closedCandles, trade.Timeframe),
-                Confidence: predictionResult.Confidence),
+                Confidence: predictionResult.Confidence,
+                BootstrapCiLower: predictionResult.BootstrapCiLower,
+                BootstrapCiUpper: predictionResult.BootstrapCiUpper),
             Warnings: warnings,
             Explanation: explanation,
-            Candles: candleDtos);
+            Candles: candleDtos,
+            KellyFractionSuggested: Math.Round(kellySuggested, 4));
     }
 
     private static PredictionDataQualityDto BuildDataQuality(

@@ -25,7 +25,9 @@ public record EvaluateTradeResponse(
     TradePredictionDto Prediction,
     IReadOnlyList<TradeWarning> Warnings,
     string Explanation,
-    IReadOnlyList<CandleDto>? Candles = null);
+    IReadOnlyList<CandleDto>? Candles = null,
+    // §10 Kelly Fraction reference (quarter-Kelly, read-only suggestion)
+    decimal? KellyFractionSuggested = null);
 
 public record MarketSnapshotDto(
     decimal CurrentPrice,
@@ -81,4 +83,7 @@ public record TradePredictionDto(
     IReadOnlyList<TrajectoryPointDto>? TrajectoryPoints = null,
     IReadOnlyList<ScenarioPathDto>? ScenarioPaths = null,
     PredictionDataQualityDto? DataQuality = null,
-    PredictionConfidenceDto? Confidence = null);
+    PredictionConfidenceDto? Confidence = null,
+    // §6 Bootstrap CI for E[R] (95% interval)
+    decimal? BootstrapCiLower = null,
+    decimal? BootstrapCiUpper = null);
