@@ -1,108 +1,164 @@
-# Crypto Trade Evaluator API
+# HAWK Pulse — Crypto Trade Evaluator · Backend API
 
-Backend API hỗ trợ đánh giá thiết lập giao dịch tiền mã hoá. Hệ thống lấy dữ liệu từ Binance Futures, tính chỉ báo kỹ thuật, quản trị rủi ro, chấm điểm setup và mô phỏng dự báo Monte Carlo (GBM).
+> .NET 10 Web API powering quantitative trade evaluation, Monte Carlo prediction, and AI-driven market analysis for the HAWK Pulse platform.
 
-> Dự án phục vụ mục đích phân tích/tham khảo, **không phải lời khuyên đầu tư**.
+---
 
-## Tính năng
+## Overview
 
-- Tạo, xem, lọc và đóng trade setup.
-- Lấy ticker và danh sách cặp USDT Futures từ Binance.
-- Phân tích thị trường để đề xuất setup `Long`, `Short` hoặc `Wait`.
-- Tính EMA 20/50/200, RSI, ATR và tỷ lệ volume.
-- Tính risk/reward, khối lượng vị thế, margin và điểm chất lượng setup.
-- Dự báo xác suất thắng/thua bằng Monte Carlo Geometric Brownian Motion; lưu kết quả và hỗ trợ backtest prediction.
-- Lưu dữ liệu bằng PostgreSQL; Redis dùng cho cache dữ liệu thị trường.
-- Tài liệu API tương tác qua Scalar trong môi trường Development.
+The **Crypto Evaluator API** is the backend service of the HAWK Pulse platform. It fetches live OHLCV data from Binance Futures, computes technical indicators, scores trade setups using a multi-rule quantitative engine, runs Monte Carlo GBM simulations for win/loss probability forecasts, and exposes a RESTful API consumed by the React frontend.
 
-## Công nghệ
+> This project is for analytical and educational purposes — **not investment advice**.
 
-- .NET 10 / ASP.NET Core Web API
-- Entity Framework Core + PostgreSQL
-- Redis
-- MediatR + FluentValidation
-- Binance Futures REST API
-- Scalar / OpenAPI
-- xUnit cho unit test và integration test
+---
 
-## Cấu trúc dự án
+## Tech Stack
 
-```text
-src/
-├── CryptoEvaluator.API/             # HTTP API, middleware, OpenAPI
-├── CryptoEvaluator.Application/     # Use case, nghiệp vụ phân tích và dự báo
-├── CryptoEvaluator.Domain/          # Entity, enum, interface, model cốt lõi
-└── CryptoEvaluator.Infrastructure/  # EF Core, PostgreSQL, Redis, Binance provider
-tests/
-├── CryptoEvaluator.Application.Tests/
-├── CryptoEvaluator.Domain.Tests/
-└── CryptoEvaluator.IntegrationTests/
-```
+| Layer | Technology |
+|---|---|
+| Runtime | .NET 10 / ASP.NET Core Web API |
+| Architecture | Clean Architecture (Domain / Application / Infrastructure / API) |
+| CQRS | MediatR |
+| Validation | FluentValidation |
+| ORM | Entity Framework Core 9 |
+| Database | PostgreSQL 16 |
+| Cache | Redis 7 |
+| Market Data | Binance Futures REST API (`fapi.binance.com`) |
+| API Docs | Scalar + OpenAPI |
+| Testing | xUnit (Unit + Integration) |
+| Containerization | Docker / Docker Compose |
 
-## Yêu cầu
+---
 
+## Features
+
+### 📊 Trade Management
+- Create, list, filter, and close trade setups
+- Full trade journal with open/closed state tracking
+- Re-evaluate any historical trade with a fresh market snapshot
+
+### 🔬 Quantitative Evaluation Engine
+- Fetches OHLCV candles from Binance Futures for the configured timeframe
+- Computes **EMA 20/50/200**, **RSI**, **ATR**, and **volume ratio**
+- Calculates **risk/reward ratio**, position size, margin, and liquidation levels
+- Scores each trade setup against a multi-rule rubric (trend alignment, momentum, volatility, structure, R:R) via `TradeScoreCalculator`
+
+### 🎲 Monte Carlo Prediction (GBM)
+- Runs Geometric Brownian Motion simulation with configurable simulated paths (default: **10,000**)
+- Returns win probability, loss probability, no-hit probability, and expected R-multiple
+- Stores prediction results per trade for later backtest comparison
+
+### 🤖 AI Market Analyzer
+- Analyzes any symbol + timeframe on demand
+- Detects market structure (pivot highs/lows) using `MarketStructureAnalyzer`
+- Proposes **Long** / **Short** setups with entry, SL (ATR-based), TP (R:R-based), and setup score
+- Returns `Wait` when market conditions don't meet minimum quality thresholds
+
+### 📈 Prediction Backtest
+- Compares saved Monte Carlo predictions against actual trade outcomes for all closed trades
+- Returns hit-rate and corridor statistics
+
+### ⚡ Caching
+- Redis cache for Binance ticker data with configurable TTL (default: **30s**)
+- Reduces Binance API call frequency under high frontend traffic
+
+---
+
+## Getting Started
+
+### Prerequisites
 - [.NET SDK 10](https://dotnet.microsoft.com/download)
-- Docker Desktop (khuyến nghị, để chạy PostgreSQL và Redis)
-- Kết nối Internet để gọi Binance Futures
+- **Docker Desktop** (for PostgreSQL and Redis)
+- Internet access to reach Binance Futures API
 
-## Khởi chạy nhanh
+### 1. Start Infrastructure
 
-### 1. Khởi chạy PostgreSQL và Redis
+Spin up PostgreSQL 16 and Redis 7 with Docker Compose:
 
 ```bash
 docker compose up -d
 ```
 
-Mặc định Docker Compose mở PostgreSQL tại `localhost:5432` và Redis tại `localhost:6379`.
+| Service | Default Port |
+|---|---|
+| PostgreSQL | `localhost:5432` |
+| Redis | `localhost:6379` |
 
-### 2. Cấu hình kết nối
+Default credentials: `POSTGRES_USER=postgres`, `POSTGRES_PASSWORD=postgrespassword`, `POSTGRES_DB=crypto_evaluator`.
 
-Chuỗi kết nối mặc định nằm trong `src/CryptoEvaluator.API/appsettings.Development.json`. Để không commit mật khẩu thật, nên dùng User Secrets trên máy local:
+### 2. Configure Connection Strings
+
+Use **User Secrets** to avoid committing credentials:
 
 ```bash
 dotnet user-secrets init --project src/CryptoEvaluator.API
-dotnet user-secrets set "ConnectionStrings:DefaultConnection" "Host=localhost;Database=crypto_evaluator;Username=postgres;Password=<mat_khau>" --project src/CryptoEvaluator.API
-dotnet user-secrets set "ConnectionStrings:Redis" "localhost:6379" --project src/CryptoEvaluator.API
+
+dotnet user-secrets set "ConnectionStrings:DefaultConnection" \
+  "Host=localhost;Database=crypto_evaluator;Username=postgres;Password=postgrespassword" \
+  --project src/CryptoEvaluator.API
+
+dotnet user-secrets set "ConnectionStrings:Redis" "localhost:6379" \
+  --project src/CryptoEvaluator.API
 ```
 
-Nếu dùng `docker-compose.yml` nguyên bản, mật khẩu PostgreSQL là `postgrespassword`; hãy đặt giá trị User Secret tương ứng hoặc thay đổi thông tin trong Compose cho đồng bộ.
-
-### 3. Restore, migration và chạy API
+### 3. Apply Migrations & Run
 
 ```bash
 dotnet restore
-dotnet ef database update --project src/CryptoEvaluator.Infrastructure --startup-project src/CryptoEvaluator.API
+
+dotnet ef database update \
+  --project src/CryptoEvaluator.Infrastructure \
+  --startup-project src/CryptoEvaluator.API
+
 dotnet run --project src/CryptoEvaluator.API
 ```
 
-API mặc định chạy tại `http://localhost:5099` (hoặc `https://localhost:7118`). Khi `ASPNETCORE_ENVIRONMENT=Development`, mở giao diện API tại:
+The API starts at:
+- HTTP: `http://localhost:5099`
+- HTTPS: `https://localhost:7118`
 
-```text
+**Interactive API Docs** (Development only):
+```
 https://localhost:7118/scalar/v1
 ```
 
-OpenAPI JSON: `https://localhost:7118/openapi/v1.json`.
+**OpenAPI JSON Schema:**
+```
+https://localhost:7118/openapi/v1.json
+```
 
-## API chính
+---
 
-| Method | Endpoint | Mô tả |
-| --- | --- | --- |
-| `POST` | `/api/v1/trades` | Tạo trade setup |
-| `GET` | `/api/v1/trades` | Danh sách trade, hỗ trợ filter |
-| `GET` | `/api/v1/trades/{id}` | Chi tiết trade |
-| `POST` | `/api/v1/trades/{id}/evaluate` | Đánh giá trade, chỉ báo và dự báo |
-| `POST` | `/api/v1/trades/{id}/close` | Đóng trade, lưu journal |
-| `GET` | `/api/v1/trades/{id}/prediction` | Kết quả prediction đã lưu |
-| `GET` | `/api/v1/trades/predictions/backtest` | Backtest các prediction đã đóng |
-| `GET` | `/api/v1/trades/ticker/{symbol}` | Giá hiện tại từ Binance |
-| `GET` | `/api/v1/trades/symbols` | Các cặp USDT Futures được hỗ trợ |
-| `GET` | `/api/v1/trades/analyze/{symbol}` | Phân tích thị trường và đề xuất setup |
+## API Reference
 
-Các enum được serialize dưới dạng chuỗi. Ví dụ giá trị thông dụng: `Long` / `Short`; timeframe: `M1`, `M5`, `M15`, `M30`, `H1`, `H4`, `D1`.
+### Trades
 
-### Ví dụ tạo và đánh giá trade
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/v1/trades` | Create a new trade setup |
+| `GET` | `/api/v1/trades` | List trades (supports filters) |
+| `GET` | `/api/v1/trades/{id}` | Get trade details |
+| `POST` | `/api/v1/trades/{id}/evaluate` | Evaluate trade — fetch candles, compute indicators, score, run Monte Carlo |
+| `POST` | `/api/v1/trades/{id}/close` | Close trade and record outcome |
+| `GET` | `/api/v1/trades/{id}/prediction` | Retrieve stored prediction result |
+| `GET` | `/api/v1/trades/predictions/backtest` | Backtest all closed trade predictions |
+
+### Market Data
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/v1/trades/ticker/{symbol}` | Live price from Binance (Redis-cached) |
+| `GET` | `/api/v1/trades/symbols` | Supported USDT Futures pairs |
+| `GET` | `/api/v1/trades/analyze/{symbol}?timeframe=H1` | AI market analysis & setup proposal |
+
+**Enum string values:**
+- Direction: `Long` / `Short`
+- Timeframe: `M1`, `M5`, `M15`, `M30`, `H1`, `H4`, `D1`
+
+### Example: Create & Evaluate a Trade
 
 ```bash
+# 1. Create trade setup
 curl -X POST http://localhost:5099/api/v1/trades \
   -H "Content-Type: application/json" \
   -d '{
@@ -116,43 +172,86 @@ curl -X POST http://localhost:5099/api/v1/trades \
     "riskPercent": 1,
     "leverage": 5
   }'
-```
 
-Sau khi nhận `id` từ phản hồi:
-
-```bash
+# 2. Evaluate (use the id returned above)
 curl -X POST http://localhost:5099/api/v1/trades/<id>/evaluate \
   -H "Content-Type: application/json" \
   -d '{ "randomSeed": 42 }'
 ```
 
-### Ví dụ phân tích thị trường
+### Example: AI Market Analysis
 
 ```bash
 curl "http://localhost:5099/api/v1/trades/analyze/BTCUSDT?timeframe=H1"
 ```
 
-Phản hồi gồm snapshot chỉ báo, chất lượng dữ liệu, khuyến nghị, các lý do chặn setup và hai phương án Long/Short với entry, stop loss, take profit, risk/reward, điểm setup và xác suất dự báo.
+Response includes: indicator snapshot, data quality, recommendation (`Long` / `Short` / `Wait`), blocking reasons (if any), and two proposed setups (Long & Short) with entry, SL, TP, R:R, setup score, and Monte Carlo win probability.
 
-## Kiểm thử
+---
+
+## Docker Deployment
+
+A multi-stage `Dockerfile` is included for production builds:
+
+```bash
+# Build image
+docker build -t crypto-evaluator-api .
+
+# Run container (ensure DB and Redis are reachable)
+docker run -p 8080:8080 \
+  -e ConnectionStrings__DefaultConnection="Host=<db>;..." \
+  -e ConnectionStrings__Redis="<redis>:6379" \
+  crypto-evaluator-api
+```
+
+The image uses `mcr.microsoft.com/dotnet/aspnet:10.0` as the runtime base. The `PORT` environment variable is respected (injected automatically on platforms like **Render**).
+
+---
+
+## Configuration Reference
+
+Key settings in `appsettings.json`:
+
+| Section | Key | Default | Description |
+|---|---|---|---|
+| `MarketData` | `BaseUrl` | `https://fapi.binance.com` | Binance Futures REST base URL |
+| `MarketData` | `CacheTtlSeconds` | `30` | Redis ticker cache TTL |
+| `MarketData` | `TimeoutSeconds` | `10` | Binance HTTP request timeout |
+| `Prediction` | `DefaultSimulatedPaths` | `10000` | Monte Carlo simulation paths |
+| `MarketAnalysis` | `MinimumSetupScore` | `65` | Min score to propose a setup |
+| `MarketAnalysis` | `MinimumWinProbability` | `55` | Min Monte Carlo win % to propose |
+| `MarketAnalysis` | `StopLossAtrMultiplier` | `1.5` | ATR multiplier for SL placement |
+| `MarketAnalysis` | `TakeProfitRiskRewardRatio` | `2` | R:R ratio for TP placement |
+| `Cors` | `AllowedOrigins` | Vercel UI URL | Allowed CORS origins |
+
+---
+
+## Testing
 
 ```bash
 dotnet test
 ```
 
-## Cấu hình đáng chú ý
+Test projects:
 
-- `MarketData`: URL Binance, timeout và TTL cache.
-- `Prediction:DefaultSimulatedPaths`: số đường mô phỏng mặc định.
-- `MarketAnalysis`: số candle yêu cầu, ATR multiplier, các ngưỡng điểm, xác suất thắng và risk/reward.
-- CORS hiện cho phép frontend tại `http://localhost:3000`, `https://localhost:3000` và `http://localhost:5173`.
+| Project | Scope |
+|---|---|
+| `CryptoEvaluator.Domain.Tests` | Domain entity logic |
+| `CryptoEvaluator.Application.Tests` | Scoring, indicators, Monte Carlo, market analysis |
+| `CryptoEvaluator.IntegrationTests` | Full API pipeline with real DB |
 
-## Lưu ý bảo mật
+---
 
-- Không commit `appsettings.Local.json`, `.env`, User Secrets hoặc chuỗi kết nối production.
-- Thay mật khẩu mặc định của PostgreSQL trước khi triển khai.
-- Binance có thể giới hạn truy cập theo khu vực hoặc rate limit; API cần xử lý phù hợp khi triển khai production.
+## Security Notes
 
-## License
+- **Never commit** `appsettings.Local.json`, `.env`, User Secrets, or production connection strings.
+- Change the default PostgreSQL password (`postgrespassword`) before any production deployment.
+- Binance may apply regional restrictions or rate limits — ensure proper retry/fallback handling in production.
+- CORS is currently configured for the Vercel-hosted frontend and local dev origins (`localhost:3000`, `localhost:5173`).
 
-Chưa có giấy phép được chỉ định. Hãy thêm tệp `LICENSE` trước khi công khai mã nguồn nếu cần.
+---
+
+## Author
+
+Developed by [@thaihoandev](https://github.com/thaihoandev)
+© 2026 HAWK Pulse
